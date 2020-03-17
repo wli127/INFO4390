@@ -1,0 +1,365 @@
+---
+title: 'Project: Risk of Presence of Cardiovascular Disease'
+author: "Waner Li 873464868"
+date: "`r format(Sys.Date(), '%d %b %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libs, message = F, warning = F}
+library(tidyverse)
+library(broom)
+library(glmnet)
+library(caret)
+library(ISLR)
+library(janitor)
+library(plotROC)
+library(kernlab)
+library(stringr)
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(MASS)
+library(randomForest)
+library(tree)
+library(gbm)
+library(ranger)
+library(dplyr)
+library(GGally)
+library(corrplot)
+library(MASS)
+library(pROC)
+library('scales')
+theme_set(theme_bw())
+```
+
+```{r}
+set.seed(1982)
+df<-read.csv("cardio_train.csv")
+ori<-read.csv("cardio_train.csv")
+
+# clean age
+df <- df %>%
+  mutate(age = age/365) %>%
+  mutate(BMI = weight/((height/100)^2))
+summary(df)
+summary(ori)
+
+```
+
+```{r}
+# clean height outliers as min height was 55cm and max height was 250cm which are most likely not correct
+clean_height <- df$height <= as.numeric(quantile(df$height, probs = c(0.9999))) & df$height >= as.numeric(quantile(df$height, probs = c(0.0001)))
+
+# clean weight outliers
+clean_weight <- df$weight <= as.numeric(quantile(df$weight, probs = c(0.9999))) & df$weight >= as.numeric(quantile(df$weight, probs = c(0.0001)))
+
+# clean ap_hi outliers
+clean_ap_hi <- df$ap_hi <= as.numeric(quantile(df$ap_hi, probs = c(0.999))) & df$ap_hi >= as.numeric(quantile(df$ap_hi, probs = c(0.0001)))
+
+# clean ap_lo outliers
+clean_ap_lo <- df$ap_lo <= as.numeric(quantile(df$ap_lo, probs = c(0.9999))) & df$ap_lo >= as.numeric(quantile(df$ap_lo, probs = c(0.0001)))
+
+
+# ap_hi >= ap_lo
+clean_bp <- df$ap_hi >= df$ap_lo
+
+# clean BMI outliers
+
+
+clean_bmi <- df$BMI <= 60 & df$BMI >= 10
+
+clean_vec <- clean_height&clean_weight&clean_ap_lo&clean_ap_hi&clean_bp&clean_bmi
+df_cardio <- df[which(clean_vec),]
+
+# use BMI to replace height and weight
+df <- df_cardio %>%
+  dplyr::select(-id,-height,-weight) %>%
+  na.omit()
+
+
+
+summary(df)
+str(df)
+```
+
+Multiple logistic regression model
+
+Deselect gender as its p value is low
+```{r,include=FALSE}
+full_glm <- glm(cardio ~ .,
+                family = "binomial", 
+                data = df)
+summary(full_glm)
+df <- df %>%
+  dplyr::select(-gender)
+```
+
+Multivariate analysis - Correlation 
+```{r}
+ggcorr(df, method = c("everything", "pearson")) 
+```
+
+```{r}
+abs(cor(df))>0.7
+```
+
+
+### The Relation between the Systolic blood pressure and Diastolic blood pressure
+
+The features are not all independent with each other. Take the relation betweeen the Systolic blood pressure and Diastolica=ggplot(data,aes(x=age,y=target))+geom_point()+geom_smooth(color="yellow")
+b=a+scale_x_continuous(name="Age")+scale_y_continuous(name="Target")
+b+ggtitle("Scatter plot with smooth curve between age and target") blood pressure for example. So we should deal with the coefficient problem. An idea to achieve this is using lasso.
+```{r}
+ggplot(data = df,aes(x=ap_hi,y=ap_lo)) + geom_point()
+```
+
+Age
+```{r}
+str(df)
+ageplot <- ggplot(df,aes(x = age,y = cardio))
+ageplot + geom_point(col = "#6e0000", alpha = .25) +
+  geom_smooth(color="yellow",size = 2) +
+  scale_x_continuous(name="Age") + 
+  scale_y_continuous(name="Cardio") +
+  ggtitle("Cardio vs age") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+glm_cardio <- glm(cardio ~ poly(BMI,2), data = df, family = "binomial")
+tidy(glm_cardio)
+```
+
+Splines
+```{r}
+ss_fits <- smooth.spline(df$BMI, df$cardio)
+df_ss <- tibble(x = ss_fits$x, y = ss_fits$y)
+
+bmi_ss <- ggplot(data = df,
+                 aes(x = BMI, y = cardio))
+
+bmi_ss + geom_point(alpha = 0.25, color = "#6e0000", alpha = .25) +
+  geom_line(data = df_ss,
+            aes(x = x, y = y),
+            color="yellow",
+            size = 2)  +
+  scale_x_continuous(name="BMI") + 
+  scale_y_continuous(name="Cardio") +
+  ggtitle("Cardio vs BMI") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Cholesterol and Glucose
+```{r}
+# show the distribution of cholesterol
+
+df_dis <- filter(df,cardio == "1")
+ggplot(df_dis, aes(x = cholesterol)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of gluc
+ggplot(df, aes(x = gluc)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+```
+
+Smoking, Alcohol intake, Physical activity
+
+```{r}
+
+# show the distribution of smoke
+ggplot(df, aes(x = smoke)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of alco
+ggplot(df, aes(x = alco)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of active
+ggplot(df, aes(x = active)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+```
+
+
+
+
+LDA
+```{r}
+set.seed(12345)
+df$cardio <- as.factor(df$cardio)
+inTraining <- caret::createDataPartition(df$cardio, 
+                                         p = .75,
+                                         list = F)
+training <- df[inTraining, ]
+testing  <- df[-inTraining, ]
+```
+
+```{r}
+set.seed(12345)
+cardio_lda <- lda(cardio ~ ., data = training)
+```
+
+```{r}
+set.seed(12345)
+acc_lda <- confusionMatrix(table(predict(cardio_lda, newdata = testing)$class, testing$cardio), positive = "1")
+pct_lda <- unname(acc_lda$overall["Accuracy"]) * 100
+pct_lda
+```
+
+Fit a regression tree to the training set. Plot the tree, and interpret
+the results. What test error rate do you obtain?
+
+```{r}
+set.seed(12345)
+test <- df %>%
+  mutate(cardio = as.numeric(cardio)) %>%
+  mutate(cardio = if_else(cardio == "1",0,1))
+str(test)
+
+inTraining <- caret::createDataPartition(test$cardio, 
+                                         p = .5,
+                                         list = F)
+f_training <- test[inTraining, ]
+f_testing  <- test[-inTraining, ]
+
+cardio_tree <- rpart::rpart(cardio ~ .,data = f_training)
+prp(cardio_tree)
+```
+
+
+```{r}
+cardio_tree
+```
+
+```{r}
+set.seed(12345)
+tree_test_preds<-predict(cardio_tree, newdata = f_testing)
+
+tree_accuracy <- mean(f_testing$cardio == round(tree_test_preds, digits = 0)) * 100
+```
+
+
+Bagging
+```{r}
+set.seed(12345)
+inTraining <- caret::createDataPartition(df$cardio, 
+                                         p = .75,
+                                         list = F)
+training <- df[inTraining, ]
+testing  <- df[-inTraining, ]
+
+```
+
+```{r}
+set.seed(12345)
+bag_cardio <- ranger::ranger(cardio ~., 
+                             data = training, 
+                             mtry = 9,
+                             probability = TRUE)
+bag_cardio
+
+bag_test_preds<-predict(bag_cardio, data = testing)
+
+bag_accuracy <- mean(testing$cardio == round(bag_test_preds$predictions[,2], digits = 0)) *100
+bag_accuracy
+```
+
+
+Random Forest 
+```{r}
+set.seed(12345)
+
+tune_grid<-expand.grid(mtry = 2:9,
+                       splitrule = "gini",
+                       min.node.size = 10)
+
+train_control<-trainControl(method = "cv", number = 10)
+
+rf_cardio_cv <- train(cardio ~.,
+                      data = training,
+                      method = "ranger",
+                      num.trees = 15,
+                      importance = "impurity",
+                      trControl = train_control,
+                      tuneGrid = tune_grid)
+
+rf_cardio_cv
+```
+
+
+
+```{r}
+plot(rf_cardio_cv)
+```
+Best mtry at each step is yielding the lowest RMSE
+
+
+
+
+```{r, include=FALSE}
+rf_cardio_8 <- ranger(cardio~.,
+                      data = training,
+                      mtry = ,
+                      probability = TRUE)
+
+rf_cardio_8
+```
+
+
+```{r, include=FALSE}
+test_preds<-predict(rf_cardio_8, data = testing)
+
+rf_accuracy <- mean(testing$cardio == round(test_preds$predictions[,2], digits = 0)) * 100
+```
+
+Importance
+```{r, include=FALSE}
+imp<-varImp(rf_cardio_cv)$importance
+rn<-row.names(imp)
+imp_df<-data_frame(variable = rn,
+                   importance = imp$Overall) %>%
+  arrange(desc(-importance)) %>%
+  mutate(variable = factor(variable,variable))
+```
+
+```{r}
+rf_imp_graph <- ggplot(data = imp_df,
+            aes(variable,importance))
+
+rf_imp_graph + geom_col(fill = "#6e0000") + 
+  coord_flip()
+```
+
+
+
+ROC
+
+```{r, include=FALSE}
+cardio_lda <- lda(cardio ~ ., data = testing)
+fits <- predict(cardio_lda)
+new_fits <- mutate(testing, 
+                   pprobs = predict(cardio_lda)$posterior[, 2],
+                   default = if_else(cardio == "1",1,0))
+
+summary_pred <- new_fits %>%
+  mutate(bg_probs = bag_test_preds$predictions[,2])%>%
+  mutate(rf_probs = test_preds$predictions[,2])%>%
+  dplyr::select(default,pprobs,bg_probs,rf_probs) %>%
+  gather("method","prob",-1)
+```
+
+```{r}
+roc_graph <- ggplot(data = summary_pred,
+            aes(d = default, m = prob, col = method))
+
+roc_graph + geom_roc(n.cuts = 0) +
+  style_roc() +
+  scale_color_brewer(palette = "Dark2")
+```
+
+
+

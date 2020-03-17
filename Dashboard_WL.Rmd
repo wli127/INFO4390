@@ -1,0 +1,461 @@
+---
+title: 'Cardiovascular Disease'
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    social: [ "twitter", "facebook", "menu"]
+    source_code: embed
+---
+
+```{r libs, message = F, warning = F, include=FALSE}
+library(tidyverse)
+library(broom)
+library(glmnet)
+library(caret)
+library(ISLR)
+library(janitor)
+library(plotROC)
+library(kernlab)
+library(stringr)
+library(rpart)
+library(rpart.plot)
+library(partykit)
+library(MASS)
+library(randomForest)
+library(tree)
+library(gbm)
+library(ranger)
+library(dplyr)
+library(GGally)
+library(corrplot)
+library(MASS)
+library(pROC)
+library(flexdashboard)
+library(knitr)
+library(DT)
+library(rpivotTable)
+library(plotly)
+library(openintro)
+library(highcharter)
+library(ggvis)
+theme_set(theme_bw())
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+df<-read.csv("cardio_train.csv")
+ori<-read.csv("cardio_train.csv")
+# clean age
+df <- df %>%
+  mutate(age = age/365) %>%
+  mutate(BMI = weight/((height/100)^2))
+```
+
+```{r, include=FALSE,cache=T}
+# clean height outliers as min height was 55cm and max height was 250cm which are most likely not correct
+clean_height <- df$height <= as.numeric(quantile(df$height, probs = c(0.9999))) & df$height >= as.numeric(quantile(df$height, probs = c(0.0001)))
+
+# clean weight outliers
+clean_weight <- df$weight <= as.numeric(quantile(df$weight, probs = c(0.9999))) & df$weight >= as.numeric(quantile(df$weight, probs = c(0.0001)))
+
+# clean ap_hi outliers
+clean_ap_hi <- df$ap_hi <= as.numeric(quantile(df$ap_hi, probs = c(0.999))) & df$ap_hi >= as.numeric(quantile(df$ap_hi, probs = c(0.0001)))
+
+# clean ap_lo outliers
+clean_ap_lo <- df$ap_lo <= as.numeric(quantile(df$ap_lo, probs = c(0.9999))) & df$ap_lo >= as.numeric(quantile(df$ap_lo, probs = c(0.0001)))
+
+# ap_hi >= ap_lo
+clean_bp <- df$ap_hi >= df$ap_lo
+
+# clean BMI outliers
+clean_bmi <- df$BMI <= 60 & df$BMI >= 10
+
+clean_vec <- clean_height&clean_weight&clean_ap_lo&clean_ap_hi&clean_bp&clean_bmi
+df_cardio <- df[which(clean_vec),]
+
+# use BMI to replace height and weight
+df <- df_cardio %>%
+  dplyr::select(-id,-height,-weight) %>%
+  na.omit()
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+full_glm <- glm(cardio ~ .,
+                family = "binomial", 
+                data = df)
+df <- df %>%
+  dplyr::select(-gender)
+df_table <-df[c(1:10000),]
+```
+
+Summary
+=====================================
+
+Row
+-------------------------------------
+
+### Risk of Presence of Cardiovascular Disease Analysis
+
+```{r}
+valueBox(value = paste("Cardiovascular"),
+         color = "warning")
+```
+
+### Diagnose Cardiovascular Disease
+```{r}
+valueBox(paste(format(sum(df$cardio == 1), big.mark = ","), " (",
+                       round(100 * sum(df$cardio) / length(df$cardio), 1), 
+                       "%)", sep = ""), 
+         caption = "Diagnosed Cases", 
+         icon = "fas fa-user-md", 
+         color = "red")
+```
+
+
+### Diagnose vs. Absent {.value-box}
+
+```{r}
+valueBox(paste(format(sum(df$cardio == 0), big.mark = ","), " (",
+                       round(100 * sum(df$cardio == 0) / length(df$cardio), 1), 
+                       "%)", sep = ""), 
+         caption = "Absent Cases", icon = "fas fa-heartbeat", 
+         color = "forestgreen")
+```
+
+
+
+Row
+-------------------------------------
+### Multivariate analysis - Correlation  {data-height=600}
+    
+```{r}
+ggcorr(df, method = c("everything", "pearson")) 
+```
+
+### Cardiovascular Disease vs Age {data-height=200}
+
+```{r}
+ageplot <- ggplot(df,aes(x = age,y = cardio))
+ageplot + geom_point(col = "#6e0000", alpha = .25) +
+  geom_smooth(color="yellow",size = 2) +
+  scale_x_continuous(name="Age") + 
+  scale_y_continuous(name="Cardio") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+glm_cardio <- glm(cardio ~ poly(BMI,2), data = df, family = "binomial")
+tidy(glm_cardio)
+```
+
+Row
+-------------------------------------
+### glm Model: Cardiovascular Disease vs BMI
+```{r}
+set.seed(12345)
+ss_fits <- smooth.spline(df$BMI, df$cardio)
+df_ss <- tibble(x = ss_fits$x, y = ss_fits$y)
+
+bmi_ss <- ggplot(data = df,
+                 aes(x = BMI, y = cardio))
+
+bmi_ss + geom_point(alpha = 0.25, color = "#6e0000", alpha = .25) +
+  geom_line(data = df_ss,
+            aes(x = x, y = y),
+            color="yellow",
+            size = 2)  +
+  scale_x_continuous(name="BMI") + 
+  scale_y_continuous(name="Cardio") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+### Distribution of Cholesterol, Glucose, Smoking, Alcohol intake, Physical activity
+```{r}
+# show the distribution of cholesterol
+ggplot(df, aes(x = cholesterol)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of gluc
+ggplot(df, aes(x = gluc)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of smoke
+ggplot(df, aes(x = smoke)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of alco
+ggplot(df, aes(x = alco)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+# show the distribution of active
+ggplot(df, aes(x = active)) +
+        geom_histogram(aes(y = ..density..), binwidth = 0.5)
+
+```
+
+Statistical Summary
+=====================================
+
+### Cardiovascular Data
+
+Column {data-width=600}
+-------------------------------------
+
+```{r}
+summary(ori)
+```
+
+Column
+-------------------------------------
+**Identify Outliner/Abnormal Data & Data Cleaning**
+
+* The age variable is counting by days
+
+* The minimuns of height, weight, Systolic blood pressure and Diastolic blood pressure is extremely low. Chose 0.01% - 99.99% ranges in order to to filter out those abnormal data.
+
+* The Systolic blood pressure should be higher than Diastolic blood. Filter out records which doesn't meet the requirement.
+
+* Converted height and weight to BMI to better indicate the level of fatness in an individual
+
+
+Model Selection {data-orientation=columns} 
+=====================================
+Column
+-----------------------------------
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+df$cardio <- as.factor(df$cardio)
+inTraining <- caret::createDataPartition(df$cardio, 
+                                         p = .75,
+                                         list = F)
+training <- df[inTraining, ]
+testing  <- df[-inTraining, ]
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+cardio_lda <- lda(cardio ~ ., data = training)
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+acc_lda <- confusionMatrix(table(predict(cardio_lda, newdata = testing)$class, testing$cardio), positive = "1")
+pct_lda <- unname(acc_lda$overall["Accuracy"]) * 100
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+test <- df %>%
+  mutate(cardio = as.numeric(cardio)) %>%
+  mutate(cardio = if_else(cardio == "1",0,1))
+str(test)
+
+inTraining <- caret::createDataPartition(test$cardio, 
+                                         p = .5,
+                                         list = F)
+f_training <- test[inTraining, ]
+f_testing  <- test[-inTraining, ]
+
+cardio_tree <- rpart::rpart(cardio ~ .,data = f_training)
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+tree_test_preds<-predict(cardio_tree, newdata = f_testing)
+
+tree_accuracy <- mean(f_testing$cardio == round(tree_test_preds, digits = 0)) * 100
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+inTraining <- caret::createDataPartition(df$cardio, 
+                                         p = .75,
+                                         list = F)
+training <- df[inTraining, ]
+testing  <- df[-inTraining, ]
+
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+bag_cardio <- ranger::ranger(cardio ~., 
+                             data = training, 
+                             mtry = 9,
+                             probability = TRUE)
+bag_cardio
+
+bag_test_preds<-predict(bag_cardio, data = testing)
+
+bag_accuracy <- mean(testing$cardio == round(bag_test_preds$predictions[,2], digits = 0)) *100
+```
+
+```{r, include=FALSE,cache=T}
+set.seed(12345)
+
+tune_grid<-expand.grid(mtry = 2:9,
+                       splitrule = "gini",
+                       min.node.size = 10)
+
+train_control<-trainControl(method = "cv", number = 10)
+
+rf_cardio_cv <- train(cardio ~.,
+                      data = training,
+                      method = "ranger",
+                      num.trees = 15,
+                      importance = "impurity",
+                      trControl = train_control,
+                      tuneGrid = tune_grid)
+
+rf_cardio_cv
+```
+
+```{r, include=FALSE,cache=T}
+rf_cardio_6 <- ranger(cardio~.,
+                      data = training,
+                      mtry = 6,
+                      probability = TRUE)
+
+rf_cardio_6
+```
+
+```{r, include=FALSE,cache=T}
+test_preds<-predict(rf_cardio_6, data = testing)
+
+rf_accuracy <- mean(testing$cardio == round(test_preds$predictions[,2], digits = 0)) * 100
+```
+
+
+### Tree
+```{r}
+prp(cardio_tree)
+```
+
+### Importance
+```{r, include=FALSE,cache=T}
+imp<-varImp(rf_cardio_cv)$importance
+rn<-row.names(imp)
+imp_df<-data_frame(variable = rn,
+                   importance = imp$Overall) %>%
+  arrange(desc(-importance)) %>%
+  mutate(variable = factor(variable,variable))
+```
+
+```{r}
+rf_imp_graph <- ggplot(data = imp_df,
+            aes(variable,importance))
+
+rf_imp_graph + geom_col(fill = "#6e0000") + 
+  coord_flip()
+```
+
+
+Column
+---------------------------
+### Random Forest - Best mtry
+
+```{r}
+plot(rf_cardio_cv)
+```
+
+
+### ROC
+```{r, include=FALSE,cache=T}
+cardio_lda <- lda(cardio ~ ., data = testing)
+fits <- predict(cardio_lda)
+new_fits <- mutate(testing, 
+                   pprobs = predict(cardio_lda)$posterior[, 2],
+                   default = if_else(cardio == "1",1,0))
+
+summary_pred <- new_fits %>%
+  mutate(bg_probs = bag_test_preds$predictions[,2])%>%
+  mutate(rf_probs = test_preds$predictions[,2])%>%
+  dplyr::select(default,pprobs,bg_probs,rf_probs) %>%
+  gather("method","prob",-1)
+```
+
+```{r}
+roc_graph <- ggplot(data = summary_pred,
+            aes(d = default, m = prob, col = method))
+
+roc_graph + geom_roc(n.cuts = 0) +
+  style_roc() +
+  scale_color_brewer(palette = "Dark2")
+```
+
+
+Executive Summary
+=====================================
+Row
+---------------------------
+### LDA Model Accuracy
+```{r}
+valueBox(value = paste(round(pct_lda,2),"%"),
+         icon = "fa-thumbs-up",
+         color = "forestgreen")
+```
+
+
+### Tree Accuracy
+```{r}
+valueBox(value = paste(round(tree_accuracy,2),"%"),
+         icon = "fa-thumbs-down")
+```
+
+### Bagging Accuracy
+```{r}
+valueBox(value = paste(round(bag_accuracy,2),"%"),
+         icon = "fa-thumbs-down")
+
+```
+
+### Random Forest Accuracy
+```{r}
+valueBox(value = paste(round(rf_accuracy,2),"%"),
+         icon = "fa-thumbs-down")
+```
+
+Row
+---------------------------
+
+
+**Research question**
+
+Whether certain features given in this database somehow indicate whether the victim has a cardiovascular disease? Analyze which feature could have positive or negative influence on catching the cardiovascular. And which model fits the best.
+
+**Conclusion**
+
+- LDA model fits the best with `r paste(round(pct_lda,2),"%")` accuracy.
+
+- Most important features are Systolic Blood Pressure, Age and Diastolic Blood Pressure.
+
+- Other features, for example, wheather smoke, drink alcohol or exercise are less important.
+
+- Overfitting problem is probably caused by the relation between the Systolic blood pressure and Diastolic blood pressure.
+
+**Recommendations**
+
+- People who are over 55, are recommended to check systolic blood pressure consistently.
+
+-	Even playing less important part in predicting cardiovascular disease but quit smoking, don’t overdrink and live in a healthy life style like doing more physical exercise will help you reduce the risk of getting cardiovascular disease.
+
+
+Data
+=======================================================================
+
+```{r}
+df_table %>%
+  mutate(Diagnose = if_else(cardio == "1", "Confirmed", "Absent")) %>%
+  mutate(ap_hi = if_else(ap_hi > 120,"High","Normal")) %>%
+  mutate(smoke = if_else(smoke == "1","Yes","No")) %>%
+  mutate(age = round(age)) %>%
+  dplyr::select(`Diagnose` = Diagnose, `Age` = age, `Systolic blood pressure` = ap_hi, `Smoke` = smoke) %>%
+  DT::datatable(rownames = FALSE,
+            options = list(searchHighlight = TRUE, 
+                           pageLength = 20), filter = 'top')
+```
+
+
